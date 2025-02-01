@@ -89,3 +89,5 @@ target/
 
 # Exlcude the database file
 .db
+
+threads_db
