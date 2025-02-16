@@ -91,3 +91,4 @@ target/
 .db
 
 threads_db
+*.json
