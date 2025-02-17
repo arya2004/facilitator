@@ -3,6 +3,7 @@ import os
 import logging
 import datetime
 import re
+import pytz
 from dotenv import load_dotenv
 from openai import OpenAI
 from googleapiclient.discovery import build
@@ -102,10 +103,16 @@ def schedule_google_calendar_event(event_details):
                     # Assuming time is in "HH:MM AM/PM" format. Combine with date.
                     combined_str = f"{event_details['date']} {event_details['time']}"
                     dt = datetime.datetime.strptime(combined_str, "%Y-%m-%d %I:%M %p")
-                    event_datetime = dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
-                    start = {"dateTime": event_datetime, "timeZone": "UTC"}
-                    # For this example, setting the end time equal to the start time.
-                    end = {"dateTime": event_datetime, "timeZone": "UTC"}
+                    
+                    # Set IST timezone
+                    ist = pytz.timezone("Asia/Kolkata")
+                    dt_ist = ist.localize(dt)  # Localize to IST
+
+                    # Format it as per Google Calendar API requirements
+                    event_datetime = dt_ist.strftime("%Y-%m-%dT%H:%M:%S%z")  # Keeps timezone offset
+
+                    start = {"dateTime": event_datetime, "timeZone": "Asia/Kolkata"}
+                    end = {"dateTime": event_datetime, "timeZone": "Asia/Kolkata"} 
                 except Exception as parse_error:
                     logging.error(f"Error parsing date and time: {parse_error}")
                     return None
