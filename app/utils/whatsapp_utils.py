@@ -2,9 +2,11 @@ import logging
 from flask import current_app, jsonify
 import json
 import requests
-
+import os
 from app.services.openai_service import generate_response
 import re
+
+WHATSAPP_ACCESS_TOKEN = os.getenv("ACCESS_TOKEN") 
 
 
 def log_http_response(response):
@@ -74,21 +76,83 @@ def process_text_for_whatsapp(text):
 
     return whatsapp_style_text
 
+import os
+import tempfile
+import logging
+import requests
+
+def download_whatsapp_document(document):
+    """
+    Downloads the attached document using WhatsApp's media API and saves it temporarily.
+    If 'media_url' is not provided, the function will use the media ID to request the media URL.
+    """
+    try:
+        file_name = document.get("filename")
+        media_url = document.get("media_url")
+        if not media_url:
+            # Fallback: use the media ID to fetch the URL from WhatsApp's API.
+            media_id = document.get("id")
+            if not media_id:
+                logging.error("No media_url or media ID provided in the document payload.")
+                return None
+            whatsapp_access_token = os.getenv("ACCESS_TOKEN")
+            media_api_url = f"https://graph.facebook.com/v18.0/{media_id}"
+            headers = {"Authorization": f"Bearer {whatsapp_access_token}"}
+            r = requests.get(media_api_url, headers=headers)
+            if r.status_code == 200:
+                media_data = r.json()
+                media_url = media_data.get("url")
+            else:
+                logging.error(f"Failed to retrieve media URL for media ID {media_id}, status code: {r.status_code}")
+                return None
+
+        headers = {"Authorization": f"Bearer {os.getenv('ACCESS_TOKEN')}"}
+        response = requests.get(media_url, headers=headers)
+        if response.status_code != 200:
+            logging.error(f"Failed to download media from {media_url}, status code: {response.status_code}")
+            return None
+
+        temp_dir = tempfile.gettempdir()
+        local_file_path = os.path.join(temp_dir, file_name)
+        with open(local_file_path, "wb") as file:
+            file.write(response.content)
+        logging.info(f"File downloaded and saved to {local_file_path}")
+        return local_file_path
+
+    except Exception as e:
+        logging.error(f"Error downloading document: {e}")
+        return None
 
 def process_whatsapp_message(body):
+    """
+    Processes an incoming WhatsApp message.
+    
+    If a document is attached, download and save the file temporarily locally.
+    Then pass the file path along with the message text to generate_response.
+    The message text (which instructs the upload) is first classified by LLM, and if the intent is upload,
+    the locally saved file is uploaded.
+    
+    Otherwise, process text-only messages.
+    """
     wa_id = body["entry"][0]["changes"][0]["value"]["contacts"][0]["wa_id"]
     name = body["entry"][0]["changes"][0]["value"]["contacts"][0]["profile"]["name"]
-
     message = body["entry"][0]["changes"][0]["value"]["messages"][0]
-    message_body = message["text"]["body"]
 
-    # TODO: implement custom function here
-    #response = generate_response(message_body)
+    local_file_path = None
+    if "document" in message:
+        # Download and save the attached file locally.
+        local_file_path = download_whatsapp_document(message["document"])
+        # Use the text provided along with the file message for intent classification.
+        # (Assume the accompanying text instructs the upload.)
+        message_body = message["document"].get("caption", "")
+    else:
+        message_body = message["text"]["body"]
 
-    # OpenAI Integration
-    response = generate_response(message_body, wa_id, name)
+    logging.info(f"MESSAGE IN PROCESS WHATSAPP MESSAGE: {message_body}")
+
+    response = generate_response(message_body, wa_id, name, local_file_path=local_file_path)
+    # Optionally, process the text for WhatsApp formatting.
     response = process_text_for_whatsapp(response)
-
     data = get_text_message_input(current_app.config["RECIPIENT_WAID"], response)
     send_message(data)
 
