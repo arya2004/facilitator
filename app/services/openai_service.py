@@ -1,9 +1,9 @@
 import os
-# import shelve   # Thread DB functionality (kept for future use)
 import logging
 import datetime
 import re
 import pytz
+import random
 from dotenv import load_dotenv
 from openai import OpenAI
 from googleapiclient.discovery import build
@@ -30,18 +30,6 @@ DEFAULT_SYSTEM_PROMPT = (
     "Location, and Additional Notes. "
     "If any detail is missing, indicate 'Not provided'."
 )
-
-# --- Thread DB functions (commented out for now) ---
-# def check_if_thread_exists(wa_id):
-#     """Retrieve the conversation history for a given wa_id from the shelf database."""
-#     with shelve.open("threads_db") as threads_shelf:
-#         return threads_shelf.get(wa_id)
-#
-# def store_thread(wa_id, conversation_history):
-#     """Store or update the conversation history for a given wa_id."""
-#     with shelve.open("threads_db", writeback=True) as threads_shelf:
-#         threads_shelf[wa_id] = conversation_history
-# --- End of thread DB functions ---
 
 def extract_event_details(message_body):
     """Uses OpenAI to extract event details like title, date, time, location, and notes from the message."""
@@ -149,42 +137,131 @@ def schedule_google_calendar_event(event_details):
         logging.error(f"Google Calendar API error: {e}")
         return None
 
+def generate_meet_link(random_mode: bool = True) -> str:
+    """
+    Overloaded function for generating a Google Meet link.
+    
+    - When `random_mode` is True (default), it reads a text file "meet_links.txt" located at the project root, 
+      picks a random link from newline-separated values, and returns it.
+    - When `random_mode` is False, it uses Google services (via the Calendar API) to generate a Meet link.
+    """
+    if random_mode:
+        try:
+            with open("meet_links.txt", "r") as file:
+                links = [line.strip() for line in file if line.strip()]
+            if links:
+                chosen_link = random.choice(links)
+                return chosen_link
+            else:
+                logging.error("No meet links available in meet_links.txt")
+                return "No Meet links available."
+        except Exception as e:
+            logging.error(f"Error reading meet links file: {e}")
+            return "Error retrieving Meet link."
+    else:
+        # Use Google services (using Calendar API) to create a dummy event and extract the Meet link.
+        try:
+            credentials = service_account.Credentials.from_service_account_info(
+                eval(GOOGLE_CALENDAR_CREDENTIALS),
+                scopes=["https://www.googleapis.com/auth/calendar"]
+            )
+            service = build("calendar", "v3", credentials=credentials)
+            now = datetime.datetime.utcnow()
+            event = {
+                'summary': 'Temporary Google Meet Event',
+                'description': 'Generated Google Meet link.',
+                'start': {
+                    'dateTime': now.isoformat() + 'Z'
+                },
+                'end': {
+                    'dateTime': (now + datetime.timedelta(minutes=30)).isoformat() + 'Z'
+                },
+                'conferenceData': {
+                    'createRequest': {
+                        'requestId': str(random.randint(100000, 999999)),  # simple random id
+                        'conferenceSolutionKey': {
+                            'type': 'hangoutsMeet'
+                        }
+                    }
+                }
+            }
+            created_event = service.events().insert(
+                calendarId=CALENDAR_ID, 
+                body=event,
+                conferenceDataVersion=1
+            ).execute()
+            # Extract the Meet link
+            meet_link = created_event.get('conferenceData', {}).get('entryPoints', [{}])[0].get('uri', None)
+            if meet_link:
+                return meet_link
+            else:
+                logging.error("No Meet link found in the created event.")
+                return "No Meet link generated."
+        except HttpError as http_err:
+            logging.error(f"Google Meet generation HTTP error: {http_err}")
+            return "Error generating Google Meet link using Google API."
+        except Exception as e:
+            logging.error(f"Google Meet generation error: {e}")
+            return "Error generating Google Meet link."
+
 def generate_response(message_body, wa_id, name):
     """
-    Extracts event details from the message, schedules it in Google Calendar,
-    and returns a summary.
-    """
-    # The conversation history / thread DB functionality is removed.
-    # conversation_history = check_if_thread_exists(wa_id)  # Removed for now.
-    # if conversation_history is None:
-    #     logging.info(f"Creating new conversation thread for {name} with wa_id {wa_id}")
-    #     conversation_history = [{"role": "system", "content": DEFAULT_SYSTEM_PROMPT}]
-    # else:
-    #     logging.info(f"Retrieving existing conversation thread for {name} with wa_id {wa_id}")
-    # conversation_history.append({"role": "user", "content": message_body})
-
-    event_details = extract_event_details(message_body)
+    Processes the incoming message by first checking the intent (using OpenAI API).
+    Depending on the intent, this function either schedules a Google Calendar event or returns a Meet link.
     
-    if not event_details or not event_details.get("date"):
-        return "Could not extract valid event details. Please provide a clear date for the reminder."
-
-    scheduled_event = schedule_google_calendar_event(event_details)
-
-    if scheduled_event:
-        response_message = (
-            f"📅 **Reminder Scheduled**\n\n"
-            f"**Title:** {scheduled_event['title']}\n"
-            f"**Date:** {scheduled_event['date']}\n"
-            f"**Time:** {scheduled_event['time']}\n"
-            f"**Location:** {scheduled_event['location']}\n"
-            f"**Notes:** {scheduled_event['notes']}\n"
-            f"🔗 [View in Google Calendar]({scheduled_event['event_link']})"
+    For the purpose of this demo:
+      - If intent is 'meet', it returns a Meet link (using the random/text file version).
+      - If intent is 'calendar', it extracts event details and schedules the event.
+      - Future intents can be added accordingly.
+    """
+    # 1. Check intent using OpenAI (meet link vs calendar event)
+    intent_prompt = (
+        "Determine if the following message is requesting a Google Meet link generation "
+        "or scheduling a Google Calendar event. Respond with only one word: 'meet' or 'calendar'.\n\n"
+        f"Message: {message_body}"
+    )
+    try:
+        intent_response = client.chat.completions.create(
+            model=DEFAULT_MODEL,
+            messages=[{"role": "user", "content": intent_prompt}],
+            temperature=0
         )
+        intent = intent_response.choices[0].message.content.strip().lower()
+    except Exception as e:
+        logging.error(f"Error determining intent: {e}")
+        return "Could not determine the intent of your message."
+
+    # 2. Branch logic based on intent
+    if intent == "meet":
+        # For demo purposes, use the overloaded function in its random link mode.
+        meet_link = generate_meet_link()  # defaults to random_mode=True
+        response_message = f"🔗 **Google Meet Link:** {meet_link}"
+        logging.info(f"Generated Meet link response: {response_message}")
+        return response_message
+
+    elif intent == "calendar":
+        event_details = extract_event_details(message_body)
+        if not event_details or not event_details.get("date"):
+            return "Could not extract valid event details. Please provide a clear date for the reminder."
+        
+        scheduled_event = schedule_google_calendar_event(event_details)
+        if scheduled_event:
+            response_message = (
+                f"📅 **Reminder Scheduled**\n\n"
+                f"**Title:** {scheduled_event['title']}\n"
+                f"**Date:** {scheduled_event['date']}\n"
+                f"**Time:** {scheduled_event['time']}\n"
+                f"**Location:** {scheduled_event['location']}\n"
+                f"**Notes:** {scheduled_event['notes']}\n"
+                f"🔗 [View in Google Calendar]({scheduled_event['event_link']})"
+            )
+        else:
+            response_message = "Failed to schedule the event in Google Calendar. Please try again."
+
+        logging.info(f"Scheduled event response: {response_message}")
+        return response_message
+
     else:
-        response_message = "Failed to schedule the event in Google Calendar. Please try again."
+        logging.error("Unrecognized intent from the message.")
+        return "Sorry, I did not understand your request. Please try again with a valid instruction."
 
-    # conversation_history.append({"role": "assistant", "content": response_message})
-    # store_thread(wa_id, conversation_history)  # Removed for now.
-
-    logging.info(f"Scheduled event response: {response_message}")
-    return response_message
