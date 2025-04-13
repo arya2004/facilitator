@@ -2,6 +2,7 @@ import os
 import logging
 import datetime
 import re
+import json
 import pytz
 import random
 from dotenv import load_dotenv
@@ -9,9 +10,12 @@ from openai import OpenAI
 from googleapiclient.discovery import build
 from google.oauth2 import service_account
 from googleapiclient.errors import HttpError  # For more specific error handling
+from googleapiclient.http import MediaFileUpload
+
 
 # Load environment variables
 load_dotenv()
+SHARED_FOLDER_ID = os.getenv("SHARED_FOLDER_ID")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 GOOGLE_CALENDAR_CREDENTIALS = os.getenv("GOOGLE_CALENDAR_CREDENTIALS")
 CALENDAR_ID = os.getenv("GOOGLE_CALENDAR_ID")
@@ -30,6 +34,15 @@ DEFAULT_SYSTEM_PROMPT = (
     "Location, and Additional Notes. "
     "If any detail is missing, indicate 'Not provided'."
 )
+
+def authenticate():
+    """Authenticate to Google Drive using service account credentials."""
+    service_account_info = json.loads(GOOGLE_CALENDAR_CREDENTIALS)
+    credentials = service_account.Credentials.from_service_account_info(
+        service_account_info,
+        scopes=["https://www.googleapis.com/auth/drive.file"]
+    )
+    return build("drive", "v3", credentials=credentials)
 
 def extract_event_details(message_body):
     """Uses OpenAI to extract event details like title, date, time, location, and notes from the message."""
@@ -204,22 +217,54 @@ def generate_meet_link(random_mode: bool = True) -> str:
             logging.error(f"Google Meet generation error: {e}")
             return "Error generating Google Meet link."
 
-def generate_response(message_body, wa_id, name):
+
+
+def upload_file_response(file_path, mime_type="text/plain", folder_id=SHARED_FOLDER_ID):
     """
-    Processes the incoming message by first checking the intent (using OpenAI API).
-    Depending on the intent, this function either schedules a Google Calendar event or returns a Meet link.
+    Uploads the file located at file_path to Google Drive,
+    and returns a response message with a link to the uploaded file.
+    """
+    try:
+        service = authenticate()
+        file_name = os.path.basename(file_path)
+        metadata = {"name": file_name}
+        if folder_id:
+            metadata["parents"] = [folder_id]
+
+        media = MediaFileUpload(file_path, mimetype=mime_type, resumable=True)
+        uploaded_file = service.files().create(
+            body=metadata,
+            media_body=media,
+            fields="id, parents"
+        ).execute()
+
+        file_id = uploaded_file["id"]
+        response_message = f"✅ File uploaded. File link: https://drive.google.com/file/d/{file_id}/view"
+        if folder_id:
+            response_message += f"\n📁 File was uploaded into folder: https://drive.google.com/drive/folders/{folder_id}"
+        return response_message
+
+    except Exception as e:
+        logging.error(f"Error uploading file: {e}")
+        return f"Error uploading file: {e}"
+
+
+def generate_response(message_body, wa_id, name, local_file_path=None):
+    """
+    Processes the incoming message by checking its intent using the OpenAI API.
+    Depending on the intent, this function will:
+      - If intent is 'upload' and a local_file_path is provided, upload that file to Google Drive.
+      - If intent is 'meet', return a Google Meet link.
+      - If intent is 'calendar', extract event details and schedule a calendar event.
     
-    For the purpose of this demo:
-      - If intent is 'meet', it returns a Meet link (using the random/text file version).
-      - If intent is 'calendar', it extracts event details and schedules the event.
-      - Future intents can be added accordingly.
+    The message_body is passed to the LLM prompt for intent classification.
     """
-    # 1. Check intent using OpenAI (meet link vs calendar event)
     intent_prompt = (
-        "Determine if the following message is requesting a Google Meet link generation "
-        "or scheduling a Google Calendar event. Respond with only one word: 'meet' or 'calendar'.\n\n"
+        "Determine if the following message is requesting a Google Meet link generation, scheduling a Google Calendar event, "
+        "or uploading a file to Google Drive. Respond with only one word: 'meet', 'calendar', or 'upload'.\n\n"
         f"Message: {message_body}"
     )
+    logging.info(f"MESSAGE IN GENERATE RESPONSE: {message_body}")
     try:
         intent_response = client.chat.completions.create(
             model=DEFAULT_MODEL,
@@ -227,13 +272,22 @@ def generate_response(message_body, wa_id, name):
             temperature=0
         )
         intent = intent_response.choices[0].message.content.strip().lower()
+        logging.info(f"Detected intent: {intent}")
     except Exception as e:
         logging.error(f"Error determining intent: {e}")
         return "Could not determine the intent of your message."
 
-    # 2. Branch logic based on intent
-    if intent == "meet":
-        # For demo purposes, use the overloaded function in its random link mode.
+    if intent == "upload":
+        if local_file_path is None:
+            return "No file available for upload. Please attach a file."
+        # Optionally, set MIME type based on file extension.
+        ext = os.path.splitext(local_file_path)[1].lower()
+        mime_type = "text/plain" if ext == ".txt" else "application/octet-stream"
+        response_message = upload_file_response(local_file_path, mime_type=mime_type)
+        logging.info(f"File upload response: {response_message}")
+        return response_message
+
+    elif intent == "meet":
         meet_link = generate_meet_link()  # defaults to random_mode=True
         response_message = f"🔗 **Google Meet Link:** {meet_link}"
         logging.info(f"Generated Meet link response: {response_message}")
@@ -257,7 +311,6 @@ def generate_response(message_body, wa_id, name):
             )
         else:
             response_message = "Failed to schedule the event in Google Calendar. Please try again."
-
         logging.info(f"Scheduled event response: {response_message}")
         return response_message
 
