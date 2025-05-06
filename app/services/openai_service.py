@@ -35,6 +35,14 @@ DEFAULT_SYSTEM_PROMPT = (
     "If any detail is missing, indicate 'Not provided'."
 )
 
+FOLDER_MAP = {
+    "college_daa":    os.getenv("FOLDER_ID_COLLEGE_DAA"),
+    "college_sdam":   os.getenv("FOLDER_ID_COLLEGE_SDAM"),
+    "college_misc":   os.getenv("FOLDER_ID_COLLEGE_MISC"),
+    "personal_docs":  os.getenv("FOLDER_ID_PERSONAL_DOCS"),
+    "personal_misc":  os.getenv("FOLDER_ID_PERSONAL_MISC"),
+}
+
 def authenticate():
     """Authenticate to Google Drive using service account credentials."""
     service_account_info = json.loads(GOOGLE_CALENDAR_CREDENTIALS)
@@ -256,15 +264,20 @@ def generate_response(message_body, wa_id, name, local_file_path=None):
       - If intent is 'upload' and a local_file_path is provided, upload that file to Google Drive.
       - If intent is 'meet', return a Google Meet link.
       - If intent is 'calendar', extract event details and schedule a calendar event.
-    
-    The message_body is passed to the LLM prompt for intent classification.
+      - If intent is 'feedback' or 'suggestion', acknowledge the feedback.
     """
+    # 1) Expanded intent prompt to include feedback/suggestion and multilingual support
     intent_prompt = (
-        "Determine if the following message is requesting a Google Meet link generation, scheduling a Google Calendar event, "
-        "or uploading a file to Google Drive. Respond with only one word: 'meet', 'calendar', or 'upload'.\n\n"
+        "Determine if the following message (in any language) is requesting:\n"
+        "- a Google Meet link ('meet'),\n"
+        "- scheduling a Google Calendar event ('calendar'),\n"
+        "- uploading a file to Google Drive ('upload'),\n"
+        "- or is providing a suggestion/feedback ('feedback').\n"
+        "Respond with exactly one word: meet, calendar, upload, or feedback.\n\n"
         f"Message: {message_body}"
     )
     logging.info(f"MESSAGE IN GENERATE RESPONSE: {message_body}")
+
     try:
         intent_response = client.chat.completions.create(
             model=DEFAULT_MODEL,
@@ -277,23 +290,65 @@ def generate_response(message_body, wa_id, name, local_file_path=None):
         logging.error(f"Error determining intent: {e}")
         return "Could not determine the intent of your message."
 
+    # 2) Handle feedback/suggestion intents
+    if intent == "feedback":
+        return "Understood—thank you for your feedback. We’ll keep improving!"
+
+    # 3) Handle file uploads
     if intent == "upload":
         if local_file_path is None:
             return "No file available for upload. Please attach a file."
-        # Optionally, set MIME type based on file extension.
+
+        # Determine target folder based on file name via OpenAI
+        file_name = os.path.basename(local_file_path)
+        folder_prompt = (
+            f"You have a file named '{file_name}'. "
+            "Please choose the correct upload folder based on these categories:\n"
+            "- college_daa: materials related to Design and Analysis of Algorithms.\n"
+            "- college_sdam: materials related to Software Design and Modelling.\n"
+            "- college_misc: any other college study–related materials.\n"
+            "- personal_docs: personal documents like license, passport, ID, etc.\n"
+            "- personal_misc: any other personal files.\n"
+            "Respond with exactly one of: college_daa, college_sdam, college_misc, personal_docs, personal_misc."
+        )
+
+        try:
+            folder_resp = client.chat.completions.create(
+                model=DEFAULT_MODEL,
+                messages=[{"role": "user", "content": folder_prompt}],
+                temperature=0
+            )
+            folder_key = folder_resp.choices[0].message.content.strip()
+            folder_id = FOLDER_MAP.get(folder_key)
+            if folder_id is None:
+                logging.warning(f"Unrecognized folder key '{folder_key}', using default.")
+                folder_id = None  # falls back to shared or default folder in upload call
+        except Exception as e:
+            logging.error(f"Error determining folder: {e}")
+            folder_id = None
+
+        # Set MIME type based on extension
         ext = os.path.splitext(local_file_path)[1].lower()
         mime_type = "text/plain" if ext == ".txt" else "application/octet-stream"
-        response_message = upload_file_response(local_file_path, mime_type=mime_type)
+
+        # Call your upload helper
+        response_message = upload_file_response(
+            file_path=local_file_path,
+            mime_type=mime_type,
+            folder_id=folder_id
+        )
         logging.info(f"File upload response: {response_message}")
         return response_message
 
-    elif intent == "meet":
+    # 4) Handle Google Meet link requests
+    if intent == "meet":
         meet_link = generate_meet_link()  # defaults to random_mode=True
         response_message = f"🔗 **Google Meet Link:** {meet_link}"
         logging.info(f"Generated Meet link response: {response_message}")
         return response_message
 
-    elif intent == "calendar":
+    # 5) Handle Calendar events
+    if intent == "calendar":
         event_details = extract_event_details(message_body)
         if not event_details or not event_details.get("date"):
             return "Could not extract valid event details. Please provide a clear date for the reminder."
@@ -314,7 +369,6 @@ def generate_response(message_body, wa_id, name, local_file_path=None):
         logging.info(f"Scheduled event response: {response_message}")
         return response_message
 
-    else:
-        logging.error("Unrecognized intent from the message.")
-        return "Sorry, I did not understand your request. Please try again with a valid instruction."
-
+    # 6) Fallback for anything else
+    logging.error(f"Unrecognized intent '{intent}' from the message.")
+    return "Sorry, I did not understand your request. Please try again with a valid instruction."
