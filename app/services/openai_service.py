@@ -20,8 +20,15 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 GOOGLE_CALENDAR_CREDENTIALS = os.getenv("GOOGLE_CALENDAR_CREDENTIALS")
 CALENDAR_ID = os.getenv("GOOGLE_CALENDAR_ID")
 
-# Initialize OpenAI Client
-client = OpenAI(api_key=OPENAI_API_KEY)
+# Initialize OpenAI Client (lazy initialization)
+client = None
+
+def get_openai_client():
+    """Get or create OpenAI client with lazy initialization."""
+    global client
+    if client is None:
+        client = OpenAI(api_key=OPENAI_API_KEY)
+    return client
 
 # Use the cost-efficient ChatCompletion model.
 DEFAULT_MODEL = "gpt-4o-mini"
@@ -65,7 +72,7 @@ def extract_event_details(message_body):
     )
 
     try:
-        response = client.chat.completions.create(
+        response = get_openai_client().chat.completions.create(
             model=DEFAULT_MODEL,
             messages=[
                 {"role": "system", "content": DEFAULT_SYSTEM_PROMPT},
@@ -280,7 +287,7 @@ def generate_response(message_body, wa_id, name, local_file_path=None):
     logging.info(f"MESSAGE IN GENERATE RESPONSE: {message_body}")
 
     try:
-        intent_response = client.chat.completions.create(
+        intent_response = get_openai_client().chat.completions.create(
             model=DEFAULT_MODEL,
             messages=[{"role": "user", "content": intent_prompt}],
             temperature=0
@@ -314,7 +321,7 @@ def generate_response(message_body, wa_id, name, local_file_path=None):
         )
 
         try:
-            folder_resp = client.chat.completions.create(
+            folder_resp = get_openai_client().chat.completions.create(
                 model=DEFAULT_MODEL,
                 messages=[{"role": "user", "content": folder_prompt}],
                 temperature=0
