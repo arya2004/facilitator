@@ -12,6 +12,8 @@ from google.oauth2 import service_account
 from googleapiclient.errors import HttpError  # For more specific error handling
 from googleapiclient.http import MediaFileUpload
 
+# Configure logging
+logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
@@ -61,6 +63,9 @@ def authenticate():
 
 def extract_event_details(message_body):
     """Uses OpenAI to extract event details like title, date, time, location, and notes from the message."""
+    logger.info("Starting event details extraction from message")
+    logger.debug(f"Input message: {message_body}")
+
     prompt = (
         "Extract the following details from the message below:\n"
         "Title: <event title>\n"
@@ -72,6 +77,7 @@ def extract_event_details(message_body):
     )
 
     try:
+        logger.debug("Making OpenAI API call for event extraction")
         response = get_openai_client().chat.completions.create(
             model=DEFAULT_MODEL,
             messages=[
@@ -81,7 +87,7 @@ def extract_event_details(message_body):
             temperature=0.7
         )
         extracted_text = response.choices[0].message.content.strip()
-        logging.info(f"LLM extracted text: {extracted_text}")
+        logger.info(f"LLM extracted text: {extracted_text}")
 
         # Extract details using regex
         title_match = re.search(r"Title:\s*(.+)", extracted_text)
@@ -97,21 +103,26 @@ def extract_event_details(message_body):
             "location": location_match.group(1).strip() if location_match else "Not provided",
             "notes": notes_match.group(1).strip() if notes_match else "Not provided"
         }
+        logger.info(f"Successfully extracted event details: {event_details}")
         return event_details
 
     except Exception as e:
-        logging.error(f"OpenAI API error while extracting event details: {e}")
+        logger.error(f"OpenAI API error while extracting event details: {e}", exc_info=True)
         return None
 
 def schedule_google_calendar_event(event_details):
     """Schedules an event in Google Calendar and returns event details."""
+    logger.info("Starting Google Calendar event scheduling")
+    logger.debug(f"Event details: {event_details}")
+
     try:
+        logger.debug("Authenticating with Google Calendar API")
         credentials = service_account.Credentials.from_service_account_info(
             eval(GOOGLE_CALENDAR_CREDENTIALS),
             scopes=["https://www.googleapis.com/auth/calendar"]
         )
         service = build("calendar", "v3", credentials=credentials)
-        
+
         if event_details["date"]:
             # If a specific time is provided, parse and format it to the required ISO 8601 format.
             if event_details["time"] != "All Day":
@@ -119,7 +130,7 @@ def schedule_google_calendar_event(event_details):
                     # Assuming time is in "HH:MM AM/PM" format. Combine with date.
                     combined_str = f"{event_details['date']} {event_details['time']}"
                     dt = datetime.datetime.strptime(combined_str, "%Y-%m-%d %I:%M %p")
-                    
+
                     # Set IST timezone
                     ist = pytz.timezone("Asia/Kolkata")
                     dt_ist = ist.localize(dt)  # Localize to IST
@@ -128,15 +139,17 @@ def schedule_google_calendar_event(event_details):
                     event_datetime = dt_ist.strftime("%Y-%m-%dT%H:%M:%S%z")  # Keeps timezone offset
 
                     start = {"dateTime": event_datetime, "timeZone": "Asia/Kolkata"}
-                    end = {"dateTime": event_datetime, "timeZone": "Asia/Kolkata"} 
+                    end = {"dateTime": event_datetime, "timeZone": "Asia/Kolkata"}
+                    logger.debug(f"Parsed event datetime: {event_datetime}")
                 except Exception as parse_error:
-                    logging.error(f"Error parsing date and time: {parse_error}")
+                    logger.error(f"Error parsing date and time: {parse_error}", exc_info=True)
                     return None
             else:
                 start = {"date": event_details["date"]}
                 end = {"date": event_details["date"]}
+                logger.debug("Event is all-day")
         else:
-            logging.error("No valid date provided in event details.")
+            logger.error("No valid date provided in event details.")
             return None
 
         event = {
@@ -148,46 +161,80 @@ def schedule_google_calendar_event(event_details):
             "reminders": {"useDefault": True}
         }
 
+        logger.debug("Inserting event into Google Calendar")
         created_event = service.events().insert(calendarId=CALENDAR_ID, body=event).execute()
+        event_link = created_event.get("htmlLink")
+        logger.info(f"Successfully scheduled event: {event_details['title']} - {event_link}")
+
         return {
             "title": event_details["title"],
             "date": event_details["date"],
             "time": event_details["time"],
             "location": event_details["location"],
             "notes": event_details["notes"],
-            "event_link": created_event.get("htmlLink")
+            "event_link": event_link
         }
 
     except HttpError as http_err:
-        logging.error(f"Google Calendar API HTTP error: {http_err.resp.status} - {http_err.content}")
+        logger.error(f"Google Calendar API HTTP error: {http_err.resp.status} - {http_err.content}")
         return None
     except Exception as e:
-        logging.error(f"Google Calendar API error: {e}")
+        logger.error(f"Google Calendar API error: {e}", exc_info=True)
         return None
 
-def generate_meet_link(random_mode: bool = True) -> str:
+def generate_meet_link(provider="google"):
     """
-    Overloaded function for generating a Google Meet link.
-    
-    - When `random_mode` is True (default), it reads a text file "meet_links.txt" located at the project root, 
-      picks a random link from newline-separated values, and returns it.
-    - When `random_mode` is False, it uses Google services (via the Calendar API) to generate a Meet link.
+    Generate a Google Meet link by reading from meet_links.txt or creating via API.
+
+    This function attempts to read a Meet link from a local file first, removing the used link
+    from the file. If the file is empty or doesn't exist, it falls back to generating a new
+    Meet link via the Google Calendar API.
+
+    Args:
+        provider (str): The meeting provider. Currently only supports "google".
+
+    Returns:
+        str: A Google Meet link URL
+
+    Logging:
+        - INFO: Function entry with provider, successful link retrieval/generation
+        - DEBUG: File operations, API calls, remaining links count
+        - WARNING: File not found, empty file (with fallback to API)
+        - ERROR: File access errors, API failures with full exception details
     """
-    if random_mode:
+    logger.info(f"generate_meet_link called with provider: {provider}")
+
+    if provider == "google":
         try:
-            with open("meet_links.txt", "r") as file:
-                links = [line.strip() for line in file if line.strip()]
-            if links:
-                chosen_link = random.choice(links)
-                return chosen_link
-            else:
-                logging.error("No meet links available in meet_links.txt")
-                return "No Meet links available."
+            logger.debug("Attempting to read meet_links.txt")
+            with open("meet_links.txt", "r+") as f:
+                links = f.readlines()
+
+                if links:
+                    link = links.pop(0).strip()
+                    logger.info(f"Retrieved Meet link from file: {link}")
+                    logger.debug(f"Remaining links in file: {len(links)}")
+
+                    f.seek(0)
+                    f.writelines(links)
+                    f.truncate()
+
+                    logger.debug("Successfully updated meet_links.txt with remaining links")
+                    return link
+                else:
+                    logger.warning("meet_links.txt is empty. Falling back to API.")
+
+        except FileNotFoundError:
+            logger.warning("meet_links.txt not found. Falling back to API.")
+        except PermissionError as e:
+            logger.error(f"Permission denied when accessing meet_links.txt: {e}")
+        except IOError as e:
+            logger.error(f"IO error when reading meet_links.txt: {e}")
         except Exception as e:
-            logging.error(f"Error reading meet links file: {e}")
-            return "Error retrieving Meet link."
-    else:
-        # Use Google services (using Calendar API) to create a dummy event and extract the Meet link.
+            logger.error(f"Unexpected error reading meet_links.txt: {e}", exc_info=True)
+
+        # Fallback to creating a dummy event if the file is empty or doesn't exist
+        logger.info("Falling back to API to generate new Meet link")
         try:
             credentials = service_account.Credentials.from_service_account_info(
                 eval(GOOGLE_CALENDAR_CREDENTIALS),
@@ -214,22 +261,23 @@ def generate_meet_link(random_mode: bool = True) -> str:
                 }
             }
             created_event = service.events().insert(
-                calendarId=CALENDAR_ID, 
+                calendarId=CALENDAR_ID,
                 body=event,
                 conferenceDataVersion=1
             ).execute()
             # Extract the Meet link
             meet_link = created_event.get('conferenceData', {}).get('entryPoints', [{}])[0].get('uri', None)
             if meet_link:
+                logger.info(f"Successfully generated Meet link via API: {meet_link}")
                 return meet_link
             else:
-                logging.error("No Meet link found in the created event.")
+                logger.error("No Meet link found in the created event.")
                 return "No Meet link generated."
         except HttpError as http_err:
-            logging.error(f"Google Meet generation HTTP error: {http_err}")
+            logger.error(f"Google Meet generation HTTP error: {http_err}")
             return "Error generating Google Meet link using Google API."
         except Exception as e:
-            logging.error(f"Google Meet generation error: {e}")
+            logger.error(f"Google Meet generation error: {e}")
             return "Error generating Google Meet link."
 
 
@@ -239,14 +287,22 @@ def upload_file_response(file_path, mime_type="text/plain", folder_id=SHARED_FOL
     Uploads the file located at file_path to Google Drive,
     and returns a response message with a link to the uploaded file.
     """
+    logger.info(f"Starting file upload: {file_path}")
+    logger.debug(f"MIME type: {mime_type}, Folder ID: {folder_id}")
+
     try:
+        logger.debug("Authenticating with Google Drive")
         service = authenticate()
         file_name = os.path.basename(file_path)
         metadata = {"name": file_name}
         if folder_id:
             metadata["parents"] = [folder_id]
+            logger.debug(f"Uploading to folder: {folder_id}")
 
+        logger.debug("Creating media upload object")
         media = MediaFileUpload(file_path, mimetype=mime_type, resumable=True)
+
+        logger.debug("Executing file upload to Google Drive")
         uploaded_file = service.files().create(
             body=metadata,
             media_body=media,
@@ -254,13 +310,15 @@ def upload_file_response(file_path, mime_type="text/plain", folder_id=SHARED_FOL
         ).execute()
 
         file_id = uploaded_file["id"]
+        logger.info(f"Successfully uploaded file {file_name} with ID: {file_id}")
+
         response_message = f"✅ File uploaded. File link: https://drive.google.com/file/d/{file_id}/view"
         if folder_id:
             response_message += f"\n📁 File was uploaded into folder: https://drive.google.com/drive/folders/{folder_id}"
         return response_message
 
     except Exception as e:
-        logging.error(f"Error uploading file: {e}")
+        logger.error(f"Error uploading file {file_path}: {e}", exc_info=True)
         return f"Error uploading file: {e}"
 
 
@@ -273,6 +331,10 @@ def generate_response(message_body, wa_id, name, local_file_path=None):
       - If intent is 'calendar', extract event details and schedule a calendar event.
       - If intent is 'feedback' or 'suggestion', acknowledge the feedback.
     """
+    logger.info(f"Processing message from {name} (WA ID: {wa_id})")
+    logger.debug(f"Message content: {message_body}")
+    logger.debug(f"Local file path: {local_file_path}")
+
     # 1) Expanded intent prompt to include feedback/suggestion and multilingual support
     intent_prompt = (
         "Determine if the following message (in any language) is requesting:\n"
@@ -283,18 +345,18 @@ def generate_response(message_body, wa_id, name, local_file_path=None):
         "Respond with exactly one word: meet, calendar, upload, or feedback.\n\n"
         f"Message: {message_body}"
     )
-    logging.info(f"MESSAGE IN GENERATE RESPONSE: {message_body}")
 
     try:
+        logger.debug("Determining message intent via OpenAI")
         intent_response = get_openai_client().chat.completions.create(
             model=DEFAULT_MODEL,
             messages=[{"role": "user", "content": intent_prompt}],
             temperature=0
         )
         intent = intent_response.choices[0].message.content.strip().lower()
-        logging.info(f"Detected intent: {intent}")
+        logger.info(f"Detected intent: {intent}")
     except Exception as e:
-        logging.error(f"Error determining intent: {e}")
+        logger.error(f"Error determining intent: {e}", exc_info=True)
         return "Could not determine the intent of your message."
 
     # 2) Handle feedback/suggestion intents
@@ -303,11 +365,15 @@ def generate_response(message_body, wa_id, name, local_file_path=None):
 
     # 3) Handle file uploads
     if intent == "upload":
+        logger.info("Processing file upload intent")
         if local_file_path is None:
+            logger.warning("Upload intent detected but no file path provided")
             return "No file available for upload. Please attach a file."
 
         # Determine target folder based on file name via OpenAI
         file_name = os.path.basename(local_file_path)
+        logger.debug(f"Determining folder for file: {file_name}")
+
         folder_prompt = (
             f"You have a file named '{file_name}'. "
             "Please choose the correct upload folder based on these categories:\n"
@@ -320,6 +386,7 @@ def generate_response(message_body, wa_id, name, local_file_path=None):
         )
 
         try:
+            logger.debug("Querying OpenAI for folder determination")
             folder_resp = get_openai_client().chat.completions.create(
                 model=DEFAULT_MODEL,
                 messages=[{"role": "user", "content": folder_prompt}],
@@ -328,15 +395,18 @@ def generate_response(message_body, wa_id, name, local_file_path=None):
             folder_key = folder_resp.choices[0].message.content.strip()
             folder_id = FOLDER_MAP.get(folder_key)
             if folder_id is None:
-                logging.warning(f"Unrecognized folder key '{folder_key}', using default.")
+                logger.warning(f"Unrecognized folder key '{folder_key}', using default.")
                 folder_id = None  # falls back to shared or default folder in upload call
+            else:
+                logger.info(f"Determined folder: {folder_key} -> {folder_id}")
         except Exception as e:
-            logging.error(f"Error determining folder: {e}")
+            logger.error(f"Error determining folder: {e}", exc_info=True)
             folder_id = None
 
         # Set MIME type based on extension
         ext = os.path.splitext(local_file_path)[1].lower()
         mime_type = "text/plain" if ext == ".txt" else "application/octet-stream"
+        logger.debug(f"Set MIME type: {mime_type}")
 
         # Call your upload helper
         response_message = upload_file_response(
@@ -344,22 +414,25 @@ def generate_response(message_body, wa_id, name, local_file_path=None):
             mime_type=mime_type,
             folder_id=folder_id
         )
-        logging.info(f"File upload response: {response_message}")
+        logger.info(f"File upload response: {response_message}")
         return response_message
 
     # 4) Handle Google Meet link requests
     if intent == "meet":
+        logger.info("Processing Meet link request")
         meet_link = generate_meet_link()  # defaults to random_mode=True
         response_message = f"🔗 **Google Meet Link:** {meet_link}"
-        logging.info(f"Generated Meet link response: {response_message}")
+        logger.info(f"Generated Meet link response: {response_message}")
         return response_message
 
     # 5) Handle Calendar events
     if intent == "calendar":
+        logger.info("Processing calendar event scheduling")
         event_details = extract_event_details(message_body)
         if not event_details or not event_details.get("date"):
+            logger.warning("Failed to extract valid event details from message")
             return "Could not extract valid event details. Please provide a clear date for the reminder."
-        
+
         scheduled_event = schedule_google_calendar_event(event_details)
         if scheduled_event:
             response_message = (
@@ -371,11 +444,13 @@ def generate_response(message_body, wa_id, name, local_file_path=None):
                 f"**Notes:** {scheduled_event['notes']}\n"
                 f"🔗 [View in Google Calendar]({scheduled_event['event_link']})"
             )
+            logger.info("Successfully scheduled calendar event")
         else:
             response_message = "Failed to schedule the event in Google Calendar. Please try again."
-        logging.info(f"Scheduled event response: {response_message}")
+            logger.error("Failed to schedule calendar event")
+        logger.info(f"Scheduled event response: {response_message}")
         return response_message
 
     # 6) Fallback for anything else
-    logging.error(f"Unrecognized intent '{intent}' from the message.")
+    logger.error(f"Unrecognized intent '{intent}' from the message.")
     return "Sorry, I did not understand your request. Please try again with a valid instruction."
