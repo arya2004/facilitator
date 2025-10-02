@@ -96,7 +96,7 @@ def download_whatsapp_document(document):
                 logging.error("No media_url or media ID provided in the document payload.")
                 return None
             whatsapp_access_token = os.getenv("ACCESS_TOKEN")
-            media_api_url = f"https://graph.facebook.com/v18.0/{media_id}"
+            media_api_url = f"https://graph.facebook.com/{current_app.config['VERSION']}/{media_id}"
             headers = {"Authorization": f"Bearer {whatsapp_access_token}"}
             r = requests.get(media_api_url, headers=headers)
             if r.status_code == 200:
