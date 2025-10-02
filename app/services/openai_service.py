@@ -100,7 +100,7 @@ def schedule_google_calendar_event(event_details):
     """Schedules an event in Google Calendar and returns event details."""
     try:
         credentials = service_account.Credentials.from_service_account_info(
-            eval(GOOGLE_CALENDAR_CREDENTIALS),
+            json.loads(GOOGLE_CALENDAR_CREDENTIALS),
             scopes=["https://www.googleapis.com/auth/calendar"]
         )
         service = build("calendar", "v3", credentials=credentials)
@@ -183,7 +183,7 @@ def generate_meet_link(random_mode: bool = True) -> str:
         # Use Google services (using Calendar API) to create a dummy event and extract the Meet link.
         try:
             credentials = service_account.Credentials.from_service_account_info(
-                eval(GOOGLE_CALENDAR_CREDENTIALS),
+                json.loads(GOOGLE_CALENDAR_CREDENTIALS),
                 scopes=["https://www.googleapis.com/auth/calendar"]
             )
             service = build("calendar", "v3", credentials=credentials)
