@@ -2,6 +2,7 @@ import sys
 import os
 from dotenv import load_dotenv
 import logging
+from .logging_config import setup_logging
 
 
 def load_configurations(app):
@@ -18,8 +19,5 @@ def load_configurations(app):
 
 
 def configure_logging():
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        stream=sys.stdout,
-    )
+    """Configure logging using the centralized logging configuration."""
+    setup_logging()

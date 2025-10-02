@@ -203,6 +203,68 @@ class TestNewFeature(unittest.TestCase):
         pass
 ```
 
+## Logging
+
+The application includes comprehensive logging to improve debugging capabilities and operational visibility. Logs are written to both console and rotating log files.
+
+### Log Files Location
+- **Directory:** `logs/`
+- **Main log file:** `logs/app.log`
+- **Rotation:** Files rotate at 10MB with up to 5 backup files
+
+### Log Levels
+- **DEBUG:** Detailed diagnostic information (file operations, API calls, data flow)
+- **INFO:** General informational messages (successful operations, state changes)
+- **WARNING:** Warning messages for recoverable issues (fallbacks, empty files)
+- **ERROR:** Error messages for failures that don't stop execution
+- **CRITICAL:** Critical failures requiring immediate attention
+
+### Configuring Log Levels
+Set the `LOG_LEVEL` environment variable to control logging verbosity:
+
+```bash
+export LOG_LEVEL=DEBUG  # For detailed debugging
+export LOG_LEVEL=INFO   # For normal operation
+export LOG_LEVEL=WARNING  # For production with minimal logs
+```
+
+### Interpreting Common Log Messages
+
+#### File Operations (generate_meet_link)
+- `"Attempting to read meet_links.txt"` - Starting file read operation
+- `"Retrieved Meet link from file: {link}"` - Successfully read link from file
+- `"meet_links.txt not found. Falling back to API."` - File missing, using API fallback
+- `"meet_links.txt is empty. Falling back to API."` - File exists but no links available
+
+#### API Operations
+- `"Starting event details extraction from message"` - Beginning OpenAI API call for event parsing
+- `"Successfully extracted event details: {details}"` - Event parsing completed
+- `"Starting Google Calendar event scheduling"` - Beginning calendar API call
+- `"Successfully scheduled event: {title}"` - Calendar event created
+
+#### Error Scenarios
+- `"OpenAI API error while extracting event details: {error}"` - OpenAI API failure
+- `"Google Calendar API HTTP error: {status} - {content}"` - Calendar API error
+- `"Error uploading file {path}: {error}"` - File upload failure
+
+### Security Considerations
+- Sensitive data (API keys, tokens, personal information) is never logged
+- Meet link URLs in logs are sanitized if they contain query parameters
+- Log files are excluded from version control via `.gitignore`
+
+### Enabling Debug Logging
+For troubleshooting issues, enable DEBUG logging:
+
+1. Set environment variable: `export LOG_LEVEL=DEBUG`
+2. Restart the application
+3. Check `logs/app.log` for detailed diagnostic information
+
+### Log Rotation
+Logs automatically rotate when they reach 10MB to prevent disk space issues. The rotation creates backup files:
+- `app.log.1` (most recent backup)
+- `app.log.2` (older backup)
+- Up to `app.log.5` (oldest backup)
+
 ## Contributing
 
 Contributions are welcome! Please fork the repository and submit a pull request with your improvements.
