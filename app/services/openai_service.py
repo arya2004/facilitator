@@ -168,13 +168,14 @@ def generate_meet_link(random_mode: bool = True) -> str:
     """
     if random_mode:
         try:
-            with open("meet_links.txt", "r") as file:
+            meet_links_path = os.getenv("MEET_LINKS_FILE_PATH", "meet_links.txt")
+            with open(meet_links_path, "r") as file:
                 links = [line.strip() for line in file if line.strip()]
             if links:
                 chosen_link = random.choice(links)
                 return chosen_link
             else:
-                logging.error("No meet links available in meet_links.txt")
+                logging.error(f"No meet links available in {meet_links_path}")
                 return "No Meet links available."
         except Exception as e:
             logging.error(f"Error reading meet links file: {e}")
