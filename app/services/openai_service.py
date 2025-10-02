@@ -118,7 +118,7 @@ def schedule_google_calendar_event(event_details):
     try:
         logger.debug("Authenticating with Google Calendar API")
         credentials = service_account.Credentials.from_service_account_info(
-            eval(GOOGLE_CALENDAR_CREDENTIALS),
+            json.loads(GOOGLE_CALENDAR_CREDENTIALS),
             scopes=["https://www.googleapis.com/auth/calendar"]
         )
         service = build("calendar", "v3", credentials=credentials)
@@ -206,38 +206,38 @@ def generate_meet_link(provider="google"):
 
     if provider == "google":
         try:
-            logger.debug("Attempting to read meet_links.txt")
-            with open("meet_links.txt", "r+") as f:
-                links = f.readlines()
-
+            logger.debug("Attempting to read meet links file")
+            meet_links_path = os.getenv("MEET_LINKS_FILE_PATH", "meet_links.txt")
+            with open(meet_links_path, "r+") as f:
+                links = [line.strip() for line in f if line.strip()]
                 if links:
-                    link = links.pop(0).strip()
+                    # deterministic: use and remove the first link
+                    link = links.pop(0)
                     logger.info(f"Retrieved Meet link from file: {link}")
                     logger.debug(f"Remaining links in file: {len(links)}")
 
                     f.seek(0)
-                    f.writelines(links)
-                    f.truncate()
-
-                    logger.debug("Successfully updated meet_links.txt with remaining links")
+                    f.truncate(0)
+                    for l in links:
+                        f.write(l + "\n")
+                    logger.debug("Successfully updated meet links file with remaining links")
                     return link
                 else:
-                    logger.warning("meet_links.txt is empty. Falling back to API.")
-
+                    logger.warning(f"{meet_links_path} is empty. Falling back to API.")
         except FileNotFoundError:
-            logger.warning("meet_links.txt not found. Falling back to API.")
+            logger.warning("meet links file not found. Falling back to API.")
         except PermissionError as e:
-            logger.error(f"Permission denied when accessing meet_links.txt: {e}")
+            logger.error(f"Permission denied when accessing meet links file: {e}")
         except IOError as e:
-            logger.error(f"IO error when reading meet_links.txt: {e}")
+            logger.error(f"IO error when reading meet links file: {e}")
         except Exception as e:
-            logger.error(f"Unexpected error reading meet_links.txt: {e}", exc_info=True)
+            logger.error(f"Unexpected error reading meet links file: {e}", exc_info=True)
 
         # Fallback to creating a dummy event if the file is empty or doesn't exist
         logger.info("Falling back to API to generate new Meet link")
         try:
             credentials = service_account.Credentials.from_service_account_info(
-                eval(GOOGLE_CALENDAR_CREDENTIALS),
+                json.loads(GOOGLE_CALENDAR_CREDENTIALS),
                 scopes=["https://www.googleapis.com/auth/calendar"]
             )
             service = build("calendar", "v3", credentials=credentials)

@@ -96,7 +96,7 @@ def download_whatsapp_document(document):
                 logging.error("No media_url or media ID provided in the document payload.")
                 return None
             whatsapp_access_token = os.getenv("ACCESS_TOKEN")
-            media_api_url = f"https://graph.facebook.com/v18.0/{media_id}"
+            media_api_url = f"https://graph.facebook.com/{current_app.config['VERSION']}/{media_id}"
             headers = {"Authorization": f"Bearer {whatsapp_access_token}"}
             r = requests.get(media_api_url, headers=headers)
             if r.status_code == 200:
@@ -123,38 +123,86 @@ def download_whatsapp_document(document):
         logging.error(f"Error downloading document: {e}")
         return None
 
-def process_whatsapp_message(body):
+def _extract_message_context(body):
     """
-    Processes an incoming WhatsApp message.
-    
-    If a document is attached, download and save the file temporarily locally.
-    Then pass the file path along with the message text to generate_response.
-    The message text (which instructs the upload) is first classified by LLM, and if the intent is upload,
-    the locally saved file is uploaded.
-    
-    Otherwise, process text-only messages.
+    Extracts user and message information from the webhook body.
+
+    Args:
+        body: The webhook request body from WhatsApp
+
+    Returns:
+        tuple: (wa_id, name, message) containing user ID, name, and message object
     """
     wa_id = body["entry"][0]["changes"][0]["value"]["contacts"][0]["wa_id"]
     name = body["entry"][0]["changes"][0]["value"]["contacts"][0]["profile"]["name"]
     message = body["entry"][0]["changes"][0]["value"]["messages"][0]
+    return wa_id, name, message
 
-    local_file_path = None
-    if "document" in message:
-        # Download and save the attached file locally.
-        local_file_path = download_whatsapp_document(message["document"])
-        # Use the text provided along with the file message for intent classification.
-        # (Assume the accompanying text instructs the upload.)
-        message_body = message["document"].get("caption", "")
-    else:
-        message_body = message["text"]["body"]
 
-    logging.info(f"MESSAGE IN PROCESS WHATSAPP MESSAGE: {message_body}")
+def _handle_text_message(message, wa_id, name):
+    """
+    Handles incoming text messages.
 
-    response = generate_response(message_body, wa_id, name, local_file_path=local_file_path)
-    # Optionally, process the text for WhatsApp formatting.
-    response = process_text_for_whatsapp(response)
-    data = get_text_message_input(current_app.config["RECIPIENT_WAID"], response)
+    Args:
+        message: The message object containing text
+        wa_id: WhatsApp ID of the sender
+        name: Name of the sender
+
+    Returns:
+        str: Generated response text
+    """
+    message_body = message["text"]["body"]
+    logging.info(f"Processing text message: {message_body}")
+    return generate_response(message_body, wa_id, name, local_file_path=None)
+
+
+def _handle_document_message(message, wa_id, name):
+    """
+    Handles incoming document messages.
+
+    Args:
+        message: The message object containing document
+        wa_id: WhatsApp ID of the sender
+        name: Name of the sender
+
+    Returns:
+        str: Generated response text
+    """
+    local_file_path = download_whatsapp_document(message["document"])
+    message_body = message["document"].get("caption", "")
+    logging.info(f"Processing document message with caption: {message_body}")
+    return generate_response(message_body, wa_id, name, local_file_path=local_file_path)
+
+
+def _send_whatsapp_response(response_text):
+    """
+    Sends a formatted response back to WhatsApp.
+
+    Args:
+        response_text: The response text to send
+    """
+    formatted_response = process_text_for_whatsapp(response_text)
+    data = get_text_message_input(current_app.config["RECIPIENT_WAID"], formatted_response)
     send_message(data)
+
+
+def process_whatsapp_message(body):
+    """
+    Processes an incoming WhatsApp message.
+
+    Delegates to appropriate handler based on message type (text or document).
+
+    Args:
+        body: The webhook request body from WhatsApp
+    """
+    wa_id, name, message = _extract_message_context(body)
+
+    if "document" in message:
+        response = _handle_document_message(message, wa_id, name)
+    else:
+        response = _handle_text_message(message, wa_id, name)
+
+    _send_whatsapp_response(response)
 
 
 def is_valid_whatsapp_message(body):
