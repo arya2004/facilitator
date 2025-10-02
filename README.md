@@ -70,22 +70,137 @@ Facilitator uses a secure, modular architecture to bridge WhatsApp and Google Su
 
 1. **Clone the repository:**
 
-   ```bash
-   git clone https://github.com/arya2004/facilitator.git
-   cd facilitator
-   ```
+    ```bash
+    git clone https://github.com/arya2004/facilitator.git
+    cd facilitator
+    ```
 2. **Install dependencies:**
 
-   ```bash
-   pip install -r requirements.txt
-   ```
+    ```bash
+    pip install -r requirements.txt
+    ```
 3. **Set up environment variables:**
-   Create a `.env` file in the root directory and add your credentials.
+    Copy `.env.example` to `.env` and fill in your credentials:
+
+    ```bash
+    cp .env.example .env
+    # Edit .env with your actual credentials
+    ```
 
 ### Running the Project
 
 ```bash
 python run.py
+```
+
+## Testing
+
+The project includes comprehensive unit tests to ensure code quality and reliability. Tests are located in the `tests/` directory and cover all utility functions and services.
+
+### Running Tests
+
+#### Prerequisites for Testing
+The project includes a `.env.example` file with all required environment variables. To set up testing:
+
+1. Copy `.env.example` to `.env`:
+   ```bash
+   cp .env.example .env
+   ```
+
+2. Fill in the required values in `.env` (most can use dummy values for testing)
+
+3. Ensure the `.env` file contains the required variables for testing
+
+#### Using unittest (built-in)
+
+```bash
+# Run all tests
+python -m unittest discover tests
+
+# Run specific test file
+python -m unittest tests.test_whatsapp_utils
+
+# Run with verbose output
+python -m unittest -v tests.test_whatsapp_utils
+```
+
+#### Using pytest (recommended for development)
+
+```bash
+# Install development dependencies
+pip install -r requirements-dev.txt
+
+# Run all tests
+pytest tests/
+
+# Run with coverage report
+pytest --cov=app tests/
+
+# Run specific test file
+pytest tests/test_whatsapp_utils.py
+
+# Run with verbose output and coverage
+pytest -v --cov=app --cov-report=html tests/
+```
+
+#### Alternative: Manual Environment Variables
+If you prefer not to use the `.env` file, you can set environment variables manually:
+
+```bash
+export OPENAI_API_KEY=dummy_key_for_testing
+export TEST_ACCESS_TOKEN=grok_test_token_12345
+# ... other required variables
+pytest tests/
+```
+
+### Test Coverage
+
+The test suite aims for >90% code coverage and includes:
+
+- **Unit tests** for all utility functions
+- **Mock-based testing** to avoid external API calls
+- **Edge case testing** for error conditions
+- **Integration test patterns** for service interactions
+
+### Test Structure
+
+```
+tests/
+├── __init__.py                    # Test package initialization
+└── test_whatsapp_utils.py         # WhatsApp utility function tests
+```
+
+### Writing New Tests
+
+When adding new functionality:
+
+1. Create test files in the `tests/` directory
+2. Follow the existing naming convention: `test_<module_name>.py`
+3. Use descriptive test method names that explain the test scenario
+4. Include proper setup and teardown methods for test isolation
+5. Mock external dependencies (APIs, file system, etc.)
+6. Test both success and failure scenarios
+
+Example test structure:
+
+```python
+import unittest
+from unittest.mock import patch
+
+class TestNewFeature(unittest.TestCase):
+
+    def setUp(self):
+        # Test setup code
+        pass
+
+    def tearDown(self):
+        # Cleanup code
+        pass
+
+    @patch('module.external_dependency')
+    def test_feature_success_scenario(self, mock_dependency):
+        # Test implementation
+        pass
 ```
 
 ## Contributing

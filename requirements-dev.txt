@@ -1,0 +1,30 @@
+# Development dependencies for testing and development tools
+
+# Testing frameworks
+pytest>=7.0.0
+pytest-cov>=4.0.0
+pytest-mock>=3.10.0
+
+# Code coverage
+coverage>=7.0.0
+
+# Additional testing utilities
+unittest-xml-reporting>=3.2.0
+pytest-html>=3.1.0
+
+# Mocking and patching
+mock>=4.0.0
+
+# Code quality and linting
+flake8>=6.0.0
+black>=23.0.0
+isort>=5.12.0
+
+# Type checking (optional)
+mypy>=1.0.0
+
+# Development server for testing
+# These are already in requirements.txt but included here for completeness
+flask>=2.3.0
+python-dotenv>=1.0.0
+requests>=2.28.0
