@@ -42,14 +42,36 @@
 ---
 ### **6️⃣ Store Credentials in Your Python Project**
 1. Open your `.env` file (or create one).
-2. Add the following:
-   ```
+2. Add the following variables:
+   ```bash
    GOOGLE_CALENDAR_CREDENTIALS='PASTE_YOUR_JSON_HERE'
    GOOGLE_CALENDAR_ID='your_calendar_id@gmail.com'
    ```
+   
+   ⚠️ **Important — format details:**
+   - The JSON must be a single line (no literal newlines).
+   - The private key section must have its newlines escaped as `\\n`.
+   - You can use a tool like `jq` or Python to minify your service account JSON.
+
+   **Example `.env` entry:**
+   ```bash
+   GOOGLE_CALENDAR_CREDENTIALS='{"type":"service_account","project_id":"your-project-id","private_key_id":"abc123","private_key":"-----BEGIN PRIVATE KEY-----\\nMIIEv...\\n-----END PRIVATE KEY-----\\n","client_email":"your-service-account@project.iam.gserviceaccount.com","client_id":"1234567890","auth_uri":"https://accounts.google.com/o/oauth2/auth","token_uri":"https://oauth2.googleapis.com/token","auth_provider_x509_cert_url":"https://www.googleapis.com/oauth2/v1/certs","client_x509_cert_url":"https://www.googleapis.com/robot/v1/metadata/x509/your-service-account.iam.gserviceaccount.com"}'
+   ```
+
+   **Quick conversion commands:**
+
+   *Using jq (Linux/macOS):*
+   ```bash
+   jq -c . service_account.json 
+   ```
+   *Using Python (cross-platform):*
+   ```bash
+   python -c "import json;print(json.dumps(json.load(open('service_account.json'))))"
+   ```
    - To find your `GOOGLE_CALENDAR_ID`:  
-     - Go to Google Calendar settings.
-     - Under **"Integrate Calendar"**, copy the **"Calendar ID"** (it looks like an email).
+   Go to **Google Calendar → Settings → Integrate Calendar** → copy the **Calendar ID** (it looks like an email).
+
+
 
 ---
 ### **7️⃣ Install Google API Client in Python**
