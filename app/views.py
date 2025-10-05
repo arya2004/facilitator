@@ -86,4 +86,8 @@ def webhook_get():
 def webhook_post():
     return handle_message()
 
+@webhook_blueprint.route("/health", methods=["GET"])
+def health_check():
+    """Health check endpoint to verify the service is running."""
+    return jsonify({"status": "ok"}), 200
 
